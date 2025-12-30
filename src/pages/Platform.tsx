@@ -3,6 +3,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { AutomationCard } from "@/components/platform/AutomationCard";
 import { RouterSelection } from "@/components/platform/RouterSelection";
+import { ConfigurationCompliance } from "@/components/platform/ConfigurationCompliance";
 import { Settings, Monitor, AlertTriangle, RefreshCw, Database, Lock } from "lucide-react";
 
 const automationFeatures = [
@@ -124,6 +125,9 @@ const Platform = () => {
 
           {/* Router Selection */}
           <RouterSelection />
+
+          {/* Configuration Compliance */}
+          <ConfigurationCompliance />
         </main>
         <Footer />
       </div>
