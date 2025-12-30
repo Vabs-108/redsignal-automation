@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { RouterCard } from "./RouterCard";
+import { RouterLoginModal } from "./RouterLoginModal";
 import { Workflow, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +11,16 @@ const vendors = [
 
 export function RouterSelection() {
   const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [loginVendor, setLoginVendor] = useState("");
+
+  const handleVendorSelect = (vendorId: string, vendorName: string) => {
+    if (vendorId === "cisco") {
+      setLoginVendor(vendorName);
+      setLoginModalOpen(true);
+    }
+    setSelectedVendor(selectedVendor === vendorId ? null : vendorId);
+  };
 
   return (
     <section className="py-20 bg-secondary/30">
@@ -33,9 +44,7 @@ export function RouterSelection() {
                 vendor={vendor.name}
                 logo={vendor.logo}
                 isSelected={selectedVendor === vendor.id}
-                onSelect={() => setSelectedVendor(
-                  selectedVendor === vendor.id ? null : vendor.id
-                )}
+                onSelect={() => handleVendorSelect(vendor.id, vendor.name)}
               />
             ))}
           </div>
@@ -91,6 +100,13 @@ export function RouterSelection() {
           </p>
         </div>
       </div>
+
+      {/* Login Modal */}
+      <RouterLoginModal
+        isOpen={loginModalOpen}
+        onClose={() => setLoginModalOpen(false)}
+        vendor={loginVendor}
+      />
     </section>
   );
 }
