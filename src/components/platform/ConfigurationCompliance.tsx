@@ -3,11 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, XCircle, AlertTriangle, Upload, Save } from "lucide-react";
+import { CheckCircle, XCircle, AlertTriangle, Upload, Save, Info } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { ComplianceChart } from "./ComplianceChart";
 import { DeviationsList } from "./DeviationsList";
+import { compareByIntent, ComparisonResult, formatSectionName } from "@/lib/configParser";
 
 interface ConfigItem {
   key: string;
@@ -67,76 +68,38 @@ export function ConfigurationCompliance() {
   const [baselineConfig, setBaselineConfig] = useState(demoBaselineConfig);
   const [actualConfig, setActualConfig] = useState(demoActualConfig);
   const [comparisonResult, setComparisonResult] = useState<ConfigItem[] | null>(null);
+  const [intentResult, setIntentResult] = useState<ComparisonResult | null>(null);
 
-  const parseConfig = (config: string): Map<string, string> => {
-    const lines = config.split("\n");
-    const configMap = new Map<string, string>();
-    let currentSection = "";
-
-    lines.forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed === "!") return;
-
-      if (!line.startsWith(" ") && !line.startsWith("\t")) {
-        currentSection = trimmed;
-        configMap.set(currentSection, "");
-      } else {
-        const key = `${currentSection}::${trimmed}`;
-        configMap.set(key, trimmed);
-      }
-    });
-
-    return configMap;
-  };
-
+  // Intent-based comparison that groups, normalizes, and ignores order
   const compareConfigs = () => {
-    const baselineMap = parseConfig(baselineConfig);
-    const actualMap = parseConfig(actualConfig);
-    const results: ConfigItem[] = [];
+    const result = compareByIntent(baselineConfig, actualConfig);
+    
+    // Convert to ConfigItem format for existing components
+    const configItems: ConfigItem[] = result.deviations.map((dev) => ({
+      key: `${formatSectionName(dev.section)}::${dev.intent}`,
+      baselineValue: dev.expected,
+      actualValue: dev.actual,
+      status: dev.actual === "NOT CONFIGURED" ? "missing" : "deviated",
+    }));
 
-    // Check baseline items against actual
-    baselineMap.forEach((value, key) => {
-      const actualValue = actualMap.get(key);
-      if (actualValue === undefined) {
-        results.push({
-          key,
-          baselineValue: value || key,
-          actualValue: "MISSING",
-          status: "missing",
-        });
-      } else if (actualValue !== value && value !== "") {
-        results.push({
-          key,
-          baselineValue: value || key,
-          actualValue: actualValue || key,
-          status: "deviated",
-        });
-      } else {
-        results.push({
-          key,
-          baselineValue: value || key,
-          actualValue: actualValue || key,
-          status: "compliant",
-        });
-      }
-    });
+    // Add compliant items for stats
+    const compliantCount = result.compliant;
+    for (let i = 0; i < compliantCount; i++) {
+      configItems.push({
+        key: `compliant-${i}`,
+        baselineValue: "configured",
+        actualValue: "configured",
+        status: "compliant",
+      });
+    }
 
-    // Check for items in actual but not in baseline
-    actualMap.forEach((value, key) => {
-      if (!baselineMap.has(key)) {
-        results.push({
-          key,
-          baselineValue: "NOT IN BASELINE",
-          actualValue: value || key,
-          status: "deviated",
-        });
-      }
-    });
-
-    setComparisonResult(results);
+    setComparisonResult(configItems);
+    setIntentResult(result);
+    
+    const totalDeviations = result.deviated + result.missing;
     toast({
-      title: "Comparison Complete",
-      description: `Found ${results.filter((r) => r.status !== "compliant").length} deviations`,
+      title: "Intent-Based Comparison Complete",
+      description: `Found ${totalDeviations} meaningful deviations (${result.extra} extra configs)`,
     });
   };
 
@@ -165,12 +128,13 @@ export function ConfigurationCompliance() {
     }
   };
 
-  const stats = comparisonResult
+  const stats = intentResult
     ? {
-        total: comparisonResult.length,
-        compliant: comparisonResult.filter((r) => r.status === "compliant").length,
-        deviated: comparisonResult.filter((r) => r.status === "deviated").length,
-        missing: comparisonResult.filter((r) => r.status === "missing").length,
+        total: intentResult.compliant + intentResult.deviated + intentResult.missing,
+        compliant: intentResult.compliant,
+        deviated: intentResult.deviated,
+        missing: intentResult.missing,
+        extra: intentResult.extra,
       }
     : null;
 
