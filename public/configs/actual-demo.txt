@@ -1,0 +1,109 @@
+! ===========================================
+! ACTUAL CONFIGURATION - CORE ROUTER
+! (Contains intentional deviations for testing)
+! ===========================================
+!
+hostname CORE-RTR-PROD-01
+!
+! --- Global Settings ---
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service password-encryption
+!
+enable secret 5 $1$mERr$hKH2Qz/9kJhK8Y7JQqMpC0
+!
+! --- Management Access ---
+username admin privilege 15 secret 5 $1$ABCD$efghijklmnopqrst
+!
+ip domain-name netauto.local
+ip name-server 10.10.10.53
+!
+! --- NTP Configuration ---
+ntp server 10.10.10.15
+ntp server 10.10.10.11 prefer
+!
+! --- Logging Configuration ---
+logging host 10.10.10.20
+logging trap debugging
+logging source-interface Loopback0
+!
+! --- Interface Loopback0 ---
+interface Loopback0
+ description Router Management Loopback
+ ip address 10.255.255.1 255.255.255.255
+ no shutdown
+!
+! --- Interface GigabitEthernet0/0 ---
+interface GigabitEthernet0/0
+ description WAN Uplink to ISP
+ ip address 192.168.1.1 255.255.255.0
+ duplex auto
+ speed auto
+ no shutdown
+!
+! --- Interface GigabitEthernet0/1 ---
+interface GigabitEthernet0/1
+ description Core Network - MODIFIED
+ ip address 10.0.0.5 255.255.255.252
+ duplex auto
+ speed auto
+ no shutdown
+!
+! --- Interface GigabitEthernet0/2 ---
+interface GigabitEthernet0/2
+ description Server VLAN Gateway
+ ip address 10.1.0.1 255.255.255.0
+ duplex full
+ speed 1000
+ no shutdown
+!
+! --- Interface GigabitEthernet0/3 ---
+interface GigabitEthernet0/3
+ description User VLAN Gateway
+ ip address 10.2.0.1 255.255.255.0
+ duplex full
+ speed 100
+ shutdown
+!
+! --- OSPF Configuration ---
+router ospf 1
+ router-id 10.255.255.1
+ network 10.0.0.0 0.0.0.3 area 0
+ network 10.1.0.0 0.0.0.255 area 0
+ network 10.2.0.0 0.0.0.255 area 0
+ network 10.255.255.1 0.0.0.0 area 0
+ network 192.168.1.0 0.0.0.255 area 0
+ passive-interface GigabitEthernet0/2
+!
+! --- Static Routes ---
+ip route 0.0.0.0 0.0.0.0 192.168.1.254
+!
+! --- Access Lists ---
+ip access-list standard MGMT-ACCESS
+ permit 10.10.10.0 0.0.0.255
+ permit 10.255.255.0 0.0.0.255
+ deny any log
+!
+! --- VTY Lines ---
+line vty 0 4
+ access-class MGMT-ACCESS in
+ transport input ssh telnet
+ login local
+!
+! --- SNMP Configuration ---
+snmp-server community public RW
+snmp-server location Data Center Rack 5
+snmp-server contact netops@netauto.local
+!
+! --- Extra unauthorized config ---
+ip route 172.16.0.0 255.255.0.0 10.0.0.2
+!
+! --- Banner ---
+banner motd ^
+===============================================
+AUTHORIZED ACCESS ONLY
+All access is logged and monitored
+===============================================
+^
+!
+end
