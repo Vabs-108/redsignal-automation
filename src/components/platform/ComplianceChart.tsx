@@ -30,6 +30,7 @@ interface ComplianceChartProps {
     compliant: number;
     deviated: number;
     missing: number;
+    extra?: number;
   };
   items: ConfigItem[];
 }
@@ -38,6 +39,7 @@ const COLORS = {
   compliant: "#22c55e",
   deviated: "#f59e0b",
   missing: "#ef4444",
+  extra: "#3b82f6",
 };
 
 const chartConfig = {
@@ -52,6 +54,10 @@ const chartConfig = {
   missing: {
     label: "Missing",
     color: COLORS.missing,
+  },
+  extra: {
+    label: "Extra",
+    color: COLORS.extra,
   },
 };
 
@@ -157,7 +163,7 @@ export function ComplianceChart({ stats, items }: ComplianceChartProps) {
           <CardTitle>Compliance Summary</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
             <div className="text-center p-4 bg-muted/50 rounded-lg">
               <div className="text-4xl font-bold mb-2">{stats.total}</div>
               <div className="text-sm text-muted-foreground">Total Config Items</div>
@@ -179,6 +185,12 @@ export function ComplianceChart({ stats, items }: ComplianceChartProps) {
                 {stats.missing}
               </div>
               <div className="text-sm text-muted-foreground">Missing</div>
+            </div>
+            <div className="text-center p-4 bg-blue-500/10 rounded-lg border border-blue-500/20">
+              <div className="text-4xl font-bold text-blue-500 mb-2">
+                {stats.extra ?? 0}
+              </div>
+              <div className="text-sm text-muted-foreground">Extra</div>
             </div>
           </div>
         </CardContent>
