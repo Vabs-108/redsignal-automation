@@ -1,16 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, XCircle, AlertTriangle, Info, Loader2, Eye, EyeOff } from "lucide-react";
-import { Textarea } from "@/components/ui/textarea";
+import { CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ComplianceChart } from "./ComplianceChart";
 import { DeviationsList } from "./DeviationsList";
-import { ConfigFileLoader } from "./ConfigFileLoader";
 import { compareByIntent, ComparisonResult, formatSectionName } from "@/lib/configParser";
-import { splitIntoBatches, type ProcessingResult } from "@/lib/configProcessor";
+import { processConfiguration, getConfigStats } from "@/lib/configProcessor";
 
 interface ConfigItem {
   key: string;
@@ -23,68 +21,79 @@ export function ConfigurationCompliance() {
   const { toast } = useToast();
   const [baselineConfig, setBaselineConfig] = useState("");
   const [actualConfig, setActualConfig] = useState("");
-  const [baselineStats, setBaselineStats] = useState<ProcessingResult | null>(null);
-  const [actualStats, setActualStats] = useState<ProcessingResult | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [configStats, setConfigStats] = useState<{
+    baseline: { lines: number; commands: number; interfaces: number };
+    actual: { lines: number; commands: number; interfaces: number };
+  } | null>(null);
   const [comparisonResult, setComparisonResult] = useState<ConfigItem[] | null>(null);
   const [intentResult, setIntentResult] = useState<ComparisonResult | null>(null);
   const [isComparing, setIsComparing] = useState(false);
-  const [showRawConfig, setShowRawConfig] = useState(false);
-  const [processingProgress, setProcessingProgress] = useState<{
-    current: number;
-    total: number;
-  } | null>(null);
 
-  const handleBaselineLoaded = (config: string, stats: ProcessingResult) => {
-    setBaselineConfig(config);
-    setBaselineStats(stats);
-    setComparisonResult(null);
-    setIntentResult(null);
-  };
+  // Auto-load demo configs from files on mount
+  useEffect(() => {
+    const loadConfigs = async () => {
+      try {
+        const [baselineRes, actualRes] = await Promise.all([
+          fetch("/configs/baseline-demo.txt"),
+          fetch("/configs/actual-demo.txt"),
+        ]);
 
-  const handleActualLoaded = (config: string, stats: ProcessingResult) => {
-    setActualConfig(config);
-    setActualStats(stats);
-    setComparisonResult(null);
-    setIntentResult(null);
-  };
+        const [baselineRaw, actualRaw] = await Promise.all([
+          baselineRes.text(),
+          actualRes.text(),
+        ]);
 
-  // Intent-based comparison with batch processing for large configs
+        // Process and clean the configs
+        const baselineProcessed = processConfiguration(baselineRaw);
+        const actualProcessed = processConfiguration(actualRaw);
+
+        const baselineStats = getConfigStats(baselineProcessed.cleanedConfig);
+        const actualStats = getConfigStats(actualProcessed.cleanedConfig);
+
+        setBaselineConfig(baselineProcessed.cleanedConfig);
+        setActualConfig(actualProcessed.cleanedConfig);
+        setConfigStats({
+          baseline: {
+            lines: baselineProcessed.lineCount,
+            commands: baselineStats.commandLines,
+            interfaces: baselineStats.interfaces,
+          },
+          actual: {
+            lines: actualProcessed.lineCount,
+            commands: actualStats.commandLines,
+            interfaces: actualStats.interfaces,
+          },
+        });
+
+        toast({
+          title: "Configurations Loaded",
+          description: `Baseline: ${baselineStats.commandLines} commands, Actual: ${actualStats.commandLines} commands`,
+        });
+      } catch (error) {
+        toast({
+          title: "Failed to Load Configurations",
+          description: "Could not load demo configuration files",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadConfigs();
+  }, [toast]);
+
+  // Intent-based comparison
   const compareConfigs = async () => {
-    if (!baselineConfig || !actualConfig) {
-      toast({
-        title: "Missing Configuration",
-        description: "Please load both baseline and actual configurations",
-        variant: "destructive",
-      });
-      return;
-    }
+    if (!baselineConfig || !actualConfig) return;
 
     setIsComparing(true);
 
     try {
-      // For large configs, process in batches
-      const baselineLines = baselineConfig.split("\n").length;
-      const actualLines = actualConfig.split("\n").length;
-      
-      if (baselineLines > 1000 || actualLines > 1000) {
-        const baselineBatches = splitIntoBatches(baselineConfig, 500);
-        const actualBatches = splitIntoBatches(actualConfig, 500);
-        
-        setProcessingProgress({ current: 0, total: baselineBatches.length + actualBatches.length });
-
-        // Process in chunks to avoid blocking UI
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        setProcessingProgress({ 
-          current: baselineBatches.length + actualBatches.length, 
-          total: baselineBatches.length + actualBatches.length 
-        });
-      }
-
-      // Perform the actual comparison
       const result = compareByIntent(baselineConfig, actualConfig);
-      
-      // Convert to ConfigItem format for existing components
+
+      // Convert to ConfigItem format
       const configItems: ConfigItem[] = result.deviations.map((dev) => ({
         key: `${formatSectionName(dev.section)}::${dev.intent}`,
         baselineValue: dev.expected,
@@ -93,8 +102,7 @@ export function ConfigurationCompliance() {
       }));
 
       // Add compliant items for stats
-      const compliantCount = result.compliant;
-      for (let i = 0; i < compliantCount; i++) {
+      for (let i = 0; i < result.compliant; i++) {
         configItems.push({
           key: `compliant-${i}`,
           baselineValue: "configured",
@@ -105,21 +113,19 @@ export function ConfigurationCompliance() {
 
       setComparisonResult(configItems);
       setIntentResult(result);
-      
-      const totalDeviations = result.deviated + result.missing;
+
       toast({
         title: "Comparison Complete",
-        description: `Found ${totalDeviations} deviations, ${result.extra} extra configs`,
+        description: `${result.deviated + result.missing} deviations, ${result.extra} extra configs`,
       });
     } catch (error) {
       toast({
         title: "Comparison Failed",
-        description: error instanceof Error ? error.message : "Unknown error",
+        description: "Error during configuration comparison",
         variant: "destructive",
       });
     } finally {
       setIsComparing(false);
-      setProcessingProgress(null);
     }
   };
 
@@ -133,7 +139,16 @@ export function ConfigurationCompliance() {
       }
     : null;
 
-  const canCompare = baselineConfig.length > 0 && actualConfig.length > 0;
+  if (isLoading) {
+    return (
+      <section className="py-20 bg-muted/30">
+        <div className="container mx-auto px-6 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <span className="ml-3 text-muted-foreground">Loading configurations...</span>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="py-20 bg-muted/30">
@@ -143,255 +158,114 @@ export function ConfigurationCompliance() {
             Configuration Compliance
           </h2>
           <p className="text-muted-foreground max-w-2xl">
-            Load router configurations from files or use demo configs. 
-            Compare against baseline standards with intelligent intent-based matching.
+            Compare router configurations against baseline standards with 
+            intelligent intent-based matching. Detects meaningful deviations only.
           </p>
         </div>
 
-        <Tabs defaultValue="load" className="space-y-6">
-          <TabsList className="grid w-full max-w-lg grid-cols-4">
-            <TabsTrigger value="load">Load</TabsTrigger>
-            <TabsTrigger value="compare" disabled={!canCompare}>
-              Compare
-            </TabsTrigger>
-            <TabsTrigger value="results" disabled={!comparisonResult}>
-              Results
-            </TabsTrigger>
-            <TabsTrigger value="charts" disabled={!comparisonResult}>
-              Charts
-            </TabsTrigger>
-          </TabsList>
+        {/* Config Stats */}
+        {configStats && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <CheckCircle className="h-5 w-5 text-primary" />
+                  Baseline Configuration
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-3">
+                  <Badge variant="outline">{configStats.baseline.lines} lines</Badge>
+                  <Badge variant="outline">{configStats.baseline.commands} commands</Badge>
+                  <Badge variant="outline">{configStats.baseline.interfaces} interfaces</Badge>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-amber-500" />
+                  Actual Configuration
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-3">
+                  <Badge variant="outline">{configStats.actual.lines} lines</Badge>
+                  <Badge variant="outline">{configStats.actual.commands} commands</Badge>
+                  <Badge variant="outline">{configStats.actual.interfaces} interfaces</Badge>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
-          {/* Load Tab */}
-          <TabsContent value="load" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <ConfigFileLoader
-                label="Baseline Configuration"
-                variant="baseline"
-                onConfigLoaded={handleBaselineLoaded}
-              />
-              <ConfigFileLoader
-                label="Actual Configuration"
-                variant="actual"
-                onConfigLoaded={handleActualLoaded}
-              />
-            </div>
+        {/* Compare Button */}
+        {!comparisonResult && (
+          <div className="flex justify-center mb-8">
+            <Button size="lg" onClick={compareConfigs} disabled={isComparing} className="px-8">
+              {isComparing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Comparing...
+                </>
+              ) : (
+                "Compare Configurations"
+              )}
+            </Button>
+          </div>
+        )}
 
-            {/* Quick Stats */}
-            {(baselineStats || actualStats) && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Info className="h-5 w-5 text-primary" />
-                    Loaded Configurations
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm font-medium mb-1">Baseline</p>
-                      {baselineStats ? (
-                        <div className="flex gap-2">
-                          <Badge variant="outline">{baselineStats.lineCount} lines</Badge>
-                          <Badge variant="outline">{baselineStats.sections.length} sections</Badge>
-                        </div>
-                      ) : (
-                        <Badge variant="secondary">Not loaded</Badge>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium mb-1">Actual</p>
-                      {actualStats ? (
-                        <div className="flex gap-2">
-                          <Badge variant="outline">{actualStats.lineCount} lines</Badge>
-                          <Badge variant="outline">{actualStats.sections.length} sections</Badge>
-                        </div>
-                      ) : (
-                        <Badge variant="secondary">Not loaded</Badge>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+        {/* Results */}
+        {comparisonResult && (
+          <Tabs defaultValue="results" className="space-y-6">
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="results">Results</TabsTrigger>
+              <TabsTrigger value="charts">Charts</TabsTrigger>
+            </TabsList>
 
-            {canCompare && (
-              <div className="flex justify-center">
-                <Button size="lg" onClick={compareConfigs} disabled={isComparing} className="px-8">
-                  {isComparing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      {processingProgress 
-                        ? `Processing ${processingProgress.current}/${processingProgress.total}...`
-                        : "Comparing..."}
-                    </>
-                  ) : (
-                    "Compare Configurations"
-                  )}
-                </Button>
-              </div>
-            )}
-          </TabsContent>
+            <TabsContent value="results" className="space-y-6">
+              {stats && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="text-2xl font-bold">{stats.total}</div>
+                      <p className="text-sm text-muted-foreground">Total</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="text-2xl font-bold text-green-500">{stats.compliant}</div>
+                      <p className="text-sm text-muted-foreground">Compliant</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="text-2xl font-bold text-amber-500">{stats.deviated}</div>
+                      <p className="text-sm text-muted-foreground">Deviated</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="text-2xl font-bold text-red-500">{stats.missing}</div>
+                      <p className="text-sm text-muted-foreground">Missing</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="text-2xl font-bold text-blue-500">{stats.extra}</div>
+                      <p className="text-sm text-muted-foreground">Extra</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+              <DeviationsList items={comparisonResult} />
+            </TabsContent>
 
-          {/* Compare Tab - View Raw Configs */}
-          <TabsContent value="compare" className="space-y-6">
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowRawConfig(!showRawConfig)}
-              >
-                {showRawConfig ? (
-                  <>
-                    <EyeOff className="h-4 w-4 mr-1" />
-                    Hide Raw
-                  </>
-                ) : (
-                  <>
-                    <Eye className="h-4 w-4 mr-1" />
-                    Show Raw
-                  </>
-                )}
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <CheckCircle className="h-5 w-5 text-primary" />
-                    Baseline Configuration
-                    {baselineStats && (
-                      <Badge variant="secondary" className="ml-auto">
-                        {baselineStats.lineCount} lines
-                      </Badge>
-                    )}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {showRawConfig ? (
-                    <Textarea
-                      value={baselineConfig}
-                      readOnly
-                      className="font-mono text-xs h-80 resize-none"
-                    />
-                  ) : (
-                    <div className="h-80 overflow-y-auto p-3 bg-muted/50 rounded-lg">
-                      <pre className="font-mono text-xs whitespace-pre-wrap">
-                        {baselineConfig.slice(0, 2000)}
-                        {baselineConfig.length > 2000 && (
-                          <span className="text-muted-foreground">
-                            {"\n\n... and {baselineConfig.split('\\n').length - 50} more lines"}
-                          </span>
-                        )}
-                      </pre>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-amber-500" />
-                    Actual Configuration
-                    {actualStats && (
-                      <Badge variant="secondary" className="ml-auto">
-                        {actualStats.lineCount} lines
-                      </Badge>
-                    )}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {showRawConfig ? (
-                    <Textarea
-                      value={actualConfig}
-                      readOnly
-                      className="font-mono text-xs h-80 resize-none"
-                    />
-                  ) : (
-                    <div className="h-80 overflow-y-auto p-3 bg-muted/50 rounded-lg">
-                      <pre className="font-mono text-xs whitespace-pre-wrap">
-                        {actualConfig.slice(0, 2000)}
-                        {actualConfig.length > 2000 && (
-                          <span className="text-muted-foreground">
-                            {"\n\n... and {actualConfig.split('\\n').length - 50} more lines"}
-                          </span>
-                        )}
-                      </pre>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="flex justify-center">
-              <Button size="lg" onClick={compareConfigs} disabled={isComparing} className="px-8">
-                {isComparing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Comparing...
-                  </>
-                ) : (
-                  "Run Comparison"
-                )}
-              </Button>
-            </div>
-          </TabsContent>
-
-          {/* Results Tab */}
-          <TabsContent value="results" className="space-y-6">
-            {stats && (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold">{stats.total}</div>
-                    <p className="text-sm text-muted-foreground">Total Items</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold text-green-500">
-                      {stats.compliant}
-                    </div>
-                    <p className="text-sm text-muted-foreground">Compliant</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold text-amber-500">
-                      {stats.deviated}
-                    </div>
-                    <p className="text-sm text-muted-foreground">Deviated</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold text-red-500">
-                      {stats.missing}
-                    </div>
-                    <p className="text-sm text-muted-foreground">Missing</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold text-blue-500">
-                      {stats.extra}
-                    </div>
-                    <p className="text-sm text-muted-foreground">Extra</p>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {comparisonResult && <DeviationsList items={comparisonResult} />}
-          </TabsContent>
-
-          {/* Charts Tab */}
-          <TabsContent value="charts">
-            {stats && <ComplianceChart stats={stats} items={comparisonResult || []} />}
-          </TabsContent>
-        </Tabs>
+            <TabsContent value="charts">
+              {stats && <ComplianceChart stats={stats} items={comparisonResult} />}
+            </TabsContent>
+          </Tabs>
+        )}
       </div>
     </section>
   );
